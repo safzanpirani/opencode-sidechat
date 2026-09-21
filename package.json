@@ -1,0 +1,23 @@
+{
+  "name": "opencode-side",
+  "version": "0.2.0",
+  "description": "Side conversations for opencode v2 - an ephemeral fork of the current session for questions and exploration, without polluting the main thread. Modelled on the Codex CLI /side command.",
+  "type": "module",
+  "license": "MIT",
+  "main": "./dist/index.js",
+  "exports": {
+    ".": "./dist/index.js",
+    "./tui": "./dist/tui.js"
+  },
+  "files": ["dist", "README.md"],
+  "scripts": {
+    "build": "bun build ./src/index.ts ./src/tui.ts --target=bun --outdir=dist --format=esm --external=@opencode/*",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": ["opencode", "opencode-plugin", "side", "fork", "codex"],
+  "devDependencies": {
+    "@opencode/plugin": "2.0.11",
+    "@opencode/client": "2.0.11",
+    "typescript": "^5.8.2"
+  }
+}
