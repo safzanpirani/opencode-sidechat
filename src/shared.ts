@@ -1,17 +1,22 @@
 /**
  * Shared between the TUI half and the server half of the plugin.
  *
- * The two halves run in different processes and cannot share memory, so a side
- * conversation is identified from the session record itself. opencode v2
- * already records that a session is a fork and of what (`Session.Info.fork`),
- * so the only thing this plugin has to add is "and it is a *side* fork", which
- * the title marker carries.
+ * The two halves run in different processes. Identity lives in a reserved,
+ * inert permission rule on the fork: the v2 update API cannot change metadata.
+ * Binding the rule to both session IDs prevents an ordinary fork from becoming
+ * a side conversation just by inheriting its parent's rules or changing title.
  */
 
 export const PLUGIN_ID = "side"
 
 /** Prefix stamped onto the title of every side conversation. */
 export const SIDE_TITLE_PREFIX = "⑂ side · "
+
+const SIDE_ID_ACTION = "opencode-side.identity:"
+
+export function sideIdentity(sessionID: string, parentID: string) {
+  return { action: SIDE_ID_ACTION + sessionID, resource: parentID, effect: "deny" as const }
+}
 
 export type SideSession = {
   /** The session this side conversation was forked from. */
@@ -23,20 +28,20 @@ export function sideTitle(parentTitle: string | undefined): string {
   return SIDE_TITLE_PREFIX + (base.length > 0 ? base : "untitled")
 }
 
-/**
- * Reads the side-conversation marker off a session record.
- *
- * A session counts as a side conversation when it carries the title marker
- * *and* v2 recorded it as a fork, so an ordinary session that happens to be
- * titled like one is not mistaken for it.
- */
+/** Reads the durable marker, independent of the display title. */
 export function readSideSession(session: unknown): SideSession | undefined {
   if (!session || typeof session !== "object") return undefined
-  const record = session as { title?: unknown; fork?: { sessionID?: unknown } }
-  // TODO(review): Choose a durable identity strategy before allowing marker-free renames.
-  if (typeof record.title !== "string" || !record.title.startsWith(SIDE_TITLE_PREFIX)) return undefined
+  const record = session as {
+    id?: unknown
+    fork?: { sessionID?: unknown }
+    permissions?: unknown
+  }
   const parentID = record.fork?.sessionID
-  if (typeof parentID !== "string" || parentID.trim().length === 0) return undefined
+  if (typeof record.id !== "string" || typeof parentID !== "string" || !parentID.trim()) return undefined
+  if (!Array.isArray(record.permissions)) return undefined
+  const marker = sideIdentity(record.id, parentID)
+  if (!record.permissions.some((rule) => rule && rule.action === marker.action
+    && rule.resource === marker.resource && rule.effect === marker.effect)) return undefined
   return { parentID }
 }
 
@@ -62,15 +67,9 @@ export const SIDE_SYSTEM_PROMPT = [
   "Do not spawn or interact with subagents from this side conversation, even if the inherited history used them.",
 ].join("\n")
 
-/**
- * Permission actions clamped inside a side conversation, so an exploratory fork
- * cannot quietly mutate the workspace even when the main session runs wide open.
- */
-// `write` and `patch` tools both gate on `edit`, and `bash` is the v1 spelling of `shell`,
-// so the built-in mutating surface is these four. `browser` is included because a browser
-// tool can navigate and submit forms, which is a side effect outside the workspace.
-// TODO(review): Choose a policy for mutating MCP/custom actions; their names are open-ended.
-export const GUARDED_ACTIONS = ["edit", "shell", "subagent", "browser"]
+// Unknown MCP/custom actions are not assumed read-only. A wildcard covers every
+// permission-gated action, including read actions; no allow exception overrides
+// a stricter policy inherited from the main thread.
 
 export type ReadonlyMode = "ask" | "deny" | "off"
 
@@ -81,7 +80,7 @@ export type SideOptions = {
   cleanup?: boolean
   /** Inject the side-conversation system prompt. Default true. */
   boundary?: boolean
-  /** How mutating tools behave inside a side conversation. Default "ask". */
+  /** How permission-gated tools behave inside a side conversation. Default "ask". */
   readonly?: ReadonlyMode
 }
 
@@ -100,5 +99,5 @@ export function resolveOptions(options: Readonly<Record<string, any>> | undefine
 
 export function guardRuleset(mode: ReadonlyMode) {
   if (mode === "off") return undefined
-  return GUARDED_ACTIONS.map((action) => ({ action, resource: "*", effect: mode }))
+  return [{ action: "*", resource: "*", effect: mode }]
 }

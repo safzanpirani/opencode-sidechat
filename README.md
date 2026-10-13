@@ -64,17 +64,25 @@ conversation that reframes the inherited history as reference context, tells the
 questions rather than continue the task, and tells it not to mutate the workspace or touch subagents
 unless you ask.
 
-At fork time the side session gets its own permission ruleset forcing `edit`, `shell`, `subagent`
-and `browser` to prompt, even when the parent session runs with them allowed. The `edit` action also
-covers the write and patch tools. You can still authorise a mutation. MCP and custom tool actions
-are not covered by this ruleset.
+At fork time the side session gets a wildcard permission rule: every permission-gated action
+prompts, including MCP and custom actions whose effects are unknown. This also prompts for read
+actions. Existing deny rules are preserved; no read-only allowlist overrides the parent's denials.
+You can still authorise a mutation. Tools that bypass opencode's permission API are not sandboxed.
 
-A side conversation is identified by its title prefix and its fork parent. Removing the prefix
-disables the server boundary prompt. A fork the TUI is already tracking stays tracked until you
-close it.
+Identity is an inert, reserved `opencode-side.identity:<sessionID>` deny rule bound to the fork's
+parent ID. The title prefix is only a label: renaming a side conversation does not remove its
+boundary, even with `readonly: "off"`. Keep the identity rule when manually replacing permissions.
+Before upgrading from the title-marker version, close existing side forks and create fresh ones.
 
-Closing a side conversation deletes it, and so does quitting the TUI with one open. Editing the
-plugin while one is open also discards it, because a plugin reload runs the same cleanup as an exit.
+If session lookup fails, the server injects the boundary conservatively and denies permission
+requests rather than silently treating the session as a main thread. This can temporarily affect
+main sessions too. Explicitly disabling `boundary` or setting `readonly: "off"` disables that half
+of the fallback.
+
+`/sideclose` interrupts the side conversation and deletes it by default. Plugin disposal never
+interrupts or deletes a live fork: the host exposes no exit reason, so reload, disable, and exit
+are all non-destructive. Reload retains the tracked fork; after a TUI restart, open a retained
+fork to use `/sideswitch` or `/sideclose`. Close it explicitly when you want it discarded.
 
 ## Configuration
 
@@ -87,8 +95,8 @@ Options go in the tuple form alongside the plugin spec:
 | Option | Default | Meaning | Read by |
 | --- | --- | --- | --- |
 | `keybind` | `"<leader>z"` | Key for `side.toggle` | TUI |
-| `cleanup` | `true` | Delete the fork on close; `false` retains it with its side title and permissions | TUI |
-| `readonly` | `"ask"` | `"ask"` prompts for mutating actions, `"deny"` blocks them, `"off"` leaves permissions alone | TUI |
+| `cleanup` | `true` | Delete the fork on explicit close; `false` retains its identity and permissions | TUI |
+| `readonly` | `"ask"` | `"ask"` prompts for all permission-gated actions, `"deny"` blocks them, `"off"` preserves inherited permissions | TUI |
 | `boundary` | `true` | Inject the side-conversation system prompt | server |
 
 ## How it maps onto Codex

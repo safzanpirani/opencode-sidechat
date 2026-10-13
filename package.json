@@ -12,7 +12,8 @@
   "files": ["dist", "README.md"],
   "scripts": {
     "build": "bun build ./src/index.ts ./src/tui.ts --target=bun --outdir=dist --format=esm --external=@opencode/*",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
   },
   "keywords": ["opencode", "opencode-plugin", "side", "fork", "codex"],
   "devDependencies": {

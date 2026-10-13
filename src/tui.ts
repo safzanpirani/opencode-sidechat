@@ -6,6 +6,7 @@ import {
   readSideSession,
   resolveOptions,
   sideTitle,
+  sideIdentity,
 } from "./shared.js"
 
 type State = {
@@ -35,8 +36,8 @@ const plugin = {
   setup(ctx) {
     const config = resolveOptions(ctx.options)
 
-    // Ephemeral by design: a side conversation should not outlive the TUI, so
-    // its pointer lives in memory rather than on disk.
+    // Memory survives hot reloads. Disposal never deletes a live fork because
+    // the host does not distinguish hot reload, disable, and normal exit.
     const [state, mutate] = ctx.storage.memory<State>("side", { initial: {} })
 
     let disposed = false
@@ -56,6 +57,15 @@ const plugin = {
     function currentSessionID(): string | undefined {
       const route = ctx.ui.router.current()
       return route.type === "session" ? route.sessionID : undefined
+    }
+
+    function activeSide() {
+      if (state.side) return state.side
+      const sessionID = currentSessionID()
+      if (!sessionID) return undefined
+      const side = readSideSession(ctx.data.session.get(sessionID))
+      if (!side) return undefined
+      return { sessionID, parentID: side.parentID }
     }
 
     function isSide(sessionID: string | undefined): boolean {
@@ -110,7 +120,11 @@ const plugin = {
         await ctx.client.session.update({
           sessionID: side.id,
           title: sideTitle(ctx.data.session.get(parentID)?.title),
-          permissions: guardRuleset(config.readonly),
+          permissions: [
+            ...(guardRuleset(config.readonly) ?? side.permissions ?? []),
+            ...(config.readonly === "ask" ? side.permissions?.filter((rule) => rule.effect === "deny") ?? [] : []),
+            sideIdentity(side.id, parentID),
+          ],
         })
       } catch {
         try {
@@ -138,16 +152,17 @@ const plugin = {
 
     function toggle() {
       if (disposed || state.busy) return
-      const open_ = state.side
+      const open_ = activeSide()
       if (!open_) {
         fail("No side conversation is open.")
         return
       }
+      mutate((draft) => { draft.side = open_ })
       open(currentSessionID() === open_.sessionID ? open_.parentID : open_.sessionID)
     }
 
     async function close() {
-      const open_ = state.side
+      const open_ = activeSide()
       if (!open_) {
         fail("No side conversation is open.")
         return
@@ -191,7 +206,7 @@ const plugin = {
               palette: true,
               slash: { name: "sideswitch" },
               bind: config.keybind,
-              enabled: () => state.side !== undefined,
+              enabled: () => activeSide() !== undefined,
               run: toggle,
             },
             {
@@ -202,7 +217,7 @@ const plugin = {
               palette: true,
               slash: { name: "sideclose" },
               bind: false,
-              enabled: () => state.side !== undefined,
+              enabled: () => activeSide() !== undefined,
               run: () => exclusive(close),
             },
           ],
@@ -228,15 +243,6 @@ const plugin = {
       offSlot()
       offRemoved()
       await pending
-      // TODO(review): Choose whether reload should retain live forks; cleanup exposes no exit reason.
-      const open_ = state.side
-      if (!open_ || !config.cleanup) return
-      try {
-        await discard(open_.sessionID)
-        mutate((draft) => { draft.side = undefined })
-      } catch {
-        fail(`Failed to discard side conversation ${open_.sessionID}. Delete it manually or retry /sideclose.`)
-      }
     }
   },
 } satisfies Plugin.Definition

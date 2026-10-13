@@ -15,19 +15,25 @@ const plugin = {
   id: PLUGIN_ID,
   async setup(ctx) {
     const config = resolveOptions(ctx.options)
-    if (!config.boundary) return
 
-    // Looked up per request rather than cached: the marker is written by a
-    // different process moments after the fork, and a local RPC is cheaper
-    // than reasoning about when a cached "not a side conversation" went stale.
-    const registration = await ctx.session.hook("context", async (input) => {
-      // TODO(review): Verify hook-error behavior before choosing fail-closed lookup handling.
+    // If identity cannot be checked, keep the boundary and deny permissions
+    // rather than relying on whether the host propagates a rejected hook.
+    const registration = config.boundary ? await ctx.session.hook("context", async (input) => {
       const session = await ctx.session.get({ sessionID: input.sessionID }).catch(() => undefined)
-      if (!isSideSession(session)) return
+      if (session && !isSideSession(session)) return
       input.system.push({ type: "text", text: SIDE_SYSTEM_PROMPT })
-    })
+    }) : undefined
+    const permission = config.readonly !== "off" ? await ctx.permission.hook("evaluate", async (input) => {
+      const session = await ctx.session.get({ sessionID: input.sessionID }).catch(() => undefined)
+      if (session) return
+      input.effect = "deny"
+      input.message = "Cannot verify the side-conversation boundary. Retry when session lookup is available."
+    }) : undefined
 
-    return () => registration.dispose()
+    return async () => {
+      await permission?.dispose()
+      await registration?.dispose()
+    }
   },
 } satisfies Plugin.Plugin
 
